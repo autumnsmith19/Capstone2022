@@ -1,0 +1,359 @@
+---
+title: "Capstone 2022"
+author: "Autumn Smith"
+date: "3/11/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("C:/Users/Autumn Smith/OneDrive/Documents/capstone")
+set.seed(19)
+```
+
+## read in data
+```{r readInData}
+
+if (!require("ipumsr")) stop("Reading IPUMS data into R requires the ipumsr package. It can be installed using the following command: install.packages('ipumsr')")
+
+ddi <- read_ipums_ddi("meps_00001.xml")
+DATA <- read_ipums_micro(ddi)
+data <- DATA[DATA$YEAR==2017,]  # making a copy of data in the year 2017 for EDA
+head(data)
+```
+
+## preparing response variable 
+
+The variable of interest is "EXPSELFPAY" -- how much is an individual expected to pay towards healthcare expenses in the year 2017.
+
+```{r plotEXPSELFPAY}
+hist(data$EXPSELFPAY, 
+     main = "Amount of expected healthcare payments by self", 
+     xlab = "Payments in Dollars", 
+     col="#6699FF")
+```
+
+We can see that the data is strongly skewed, and in need of a transformation in order to be interpretable. 
+I will perform a log transformation of the income data. 
+
+```{r makelogEXPSELFPAY}
+data$logEXPSELFPAY <- log(data$EXPSELFPAY+1)
+```
+
+```{r plotlogEXPSELFPAY}
+mean <- mean(data$logEXPSELFPAY)
+median <- median(data$logEXPSELFPAY)
+hist(data$logEXPSELFPAY, 
+     main = "Logged amount of expected healthcare payments by self", 
+     xlab = "Payments in logged Dollars", 
+     col="#6699FF")
+abline(v = mean, col = '#00032c', lwd = 2)
+abline(v = median, col = '#f79256', lwd = 2)
+text(4.9, 9000, "Median", col = '#f79256')
+text(3, 8000, "Mean", col = '#00032c')
+
+```
+
+Now, we can see that the data appears to be more normal, with a spike around zero dollars.
+The mean is 3.53 logged dollars, which equates to about 34 dollars. The median is 4.17, or around 65 dollars.
+
+## Data Cleaning
+Twelve features and one outcome variable have been selected for the model. 
+```{r setup d1}
+d1.cols <- c("logEXPSELFPAY", "MARSTAT", "AGE","EDUC", "SEX", "RACEA", "HISPETH", "VISITYRNO","POVCAT", "USCTRVLTIM", "HINOTCOV", "HIPRIVATE", "ADILCR")
+d1 <- data[,d1.cols]
+```
+
+In the original dataset, NA values are listed as a large value starting with the digit 9 (i.e. 996, 998, 99, etc.). 
+In the following steps, values that should actually be NA values are cleaned, and the appropriate features are set as factor variables, instead of numeric variables. 
+All but logEXPSELFPAY and AGE are set as factors. 
+Some of the features have no NA values that need to be cleaned, so that step is not present. 
+
+```{r cleanMARSTAT}
+d1$MARSTAT <- ifelse(d1$MARSTAT == 0 | d1$MARSTAT == 99, NA,d1$MARSTAT)
+d1$MARSTAT <- as.factor(d1$MARSTAT)
+summary(d1$MARSTAT)
+```
+
+```{r cleanAGE}
+d1$AGE <- ifelse(d1$AGE > 85, NA, d1$AGE)
+summary(d1$AGE)
+```
+
+```{r cleanEDUC}
+d1$EDUC <- ifelse(d1$EDUC == 0 | d1$EDUC > 504, NA, d1$EDUC)
+d1$EDUC <- as.factor(d1$EDUC)
+summary(d1$EDUC)
+```
+
+```{r cleanSEX}
+
+d1$SEX <- as.factor(d1$SEX)
+summary(d1$SEX)
+```
+
+```{r cleanRACEA}
+d1$RACEA <- ifelse(d1$RACEA > 899, NA, d1$RACEA)
+d1$RACEA <- as.factor(d1$RACEA)
+summary(d1$RACEA)
+```
+
+No NA values to be cleaned for HISPETH
+```{r cleanHISPETH}
+d1$HISPETH <- as.factor(d1$HISPETH)
+summary(d1$HISPETH)
+```
+
+```{r cleanVISITYRNO}
+d1$VISITYRNO <- ifelse(d1$VISITYRNO > 40, NA, d1$VISITYRNO)
+d1$VISITYRNO <- as.factor(d1$VISITYRNO)
+summary(d1$VISITYRNO)
+```
+
+```{r cleanPOVCAT}
+d1$POVCAT <- as.factor(d1$POVCAT)
+summary(d1$POVCAT)
+```
+
+```{r cleanUSCTRVLTIM}
+d1$USCTRVLTIM <- ifelse(d1$USCTRVLTIM == 0 | d1$USCTRVLTIM > 6, NA, d1$USCTRVLTIM)
+d1$USCTRVLTIM <- as.factor(d1$USCTRVLTIM)
+summary(d1$USCTRVLTIM)
+```
+
+```{r cleanHINOTCOV}
+d1$HINOTCOV<- ifelse(d1$HINOTCOV == 0 | d1$HINOTCOV > 2, NA, d1$HINOTCOV)
+d1$HINOTCOV <- as.factor(d1$HINOTCOV)
+summary(d1$HINOTCOV)
+```
+
+```{r cleanHIPRIV}
+d1$HIPRIVATE <- as.factor(d1$HIPRIVATE)
+summary(d1$HIPRIVATE)
+```
+
+```{r cleanADILCR}
+d1$ADILCR <- ifelse(d1$ADILCR == 0 | d1$ADILCR > 2, NA, d1$ADILCR)
+d1$ADILCR <- as.factor(d1$ADILCR)
+summary(d1$ADILCR)
+```
+
+## EDA: exploratory data analysis
+
+First, we remove any rows with missing values.
+```{r setup_d}
+d <- d1
+d <- d[complete.cases(d),]
+```
+
+The first variable we consider is AGE; age is capped at a low of 15 and at a high of 85. No individual under the age of 15 was surveyed, and any individual over 85 was marked to be 85.
+```{r exploreAGE}
+mean <- mean(d$AGE)
+median <- median(d$AGE)
+hist(d$AGE, 
+     main = "Distribution of Age", 
+     xlab = "Age in years", 
+     col="#6699FF")
+abline(v = mean, col = '#00032c', lwd = 2)
+abline(v = median, col = '#f79256', lwd = 2)
+text(54, 1500, "Median", col = '#f79256')
+text(46, 1400, "Mean", col = '#00032c')
+
+```
+
+Age appears somewhat normal with a large spike of individuals between the age of 15 and 20. 
+Next, we consider age versus our outcome, expected healthcare payments. 
+
+```{r exploreAGEcont}
+plot(d$AGE,d$logEXPSELFPAY, 
+     main = "Age vs. logged Expected Healthcare payments", 
+     xlab = "Age in years",
+     ylab = "Logged Dollars",
+     col="#6699FF")
+```
+
+There does not appear to be a strong relationship between age and logged dollars. For each possible age, there is a wide spread of expected healthcare payments. 
+
+```{r exploreAGEcont2}
+cor(d$AGE,d$logEXPSELFPAY)
+```
+
+The correlation between age and logged expected payments is 0.38, so it appears that there is light, positive correlation. 
+
+Now, we consider the variable EDUC, which represents level of education a unit received. 
+
+```{r exploreEDUC}
+xlabs <- c("Never attended","Grade 1", "Grade 2", 
+           "Grade 3", "Grade 4", "Grade 5", 
+           "Grade 6", "Grade 7", "Grade 8", "Grade 9",
+           "Grade 10", "Grade 11", "Grade 12, no diploma",
+           "High school graduate", "GED or equiv.",
+           "Some college", "Bachelors",
+           "Masters","Doctoral", "Other"
+           )
+par(mar=c(10, 3, 1, 1))
+plot(d$EDUC, las = 2, names.arg = xlabs, col="#6699FF",
+     main = "Education level")
+
+```
+Most surveyed individuals have received some form of secondary education. About 25% of surveyed individuals have an education level of being a high school graduate, but not obtaining further education. About 33% of surveyed individuals have an education level of some college or more education. 
+
+```{r exploreSEX}
+plot(d$SEX, names.arg=c("Male", "Female"),  col="#6699FF",
+     main = "Sex")
+```
+
+Of those surveyed, 43.2% identify as male, and 56.7% identify as female. In the year 2017, no surveyed individual chose to identify as a sex or gender other than male or female.
+
+```{r exploreRACEA}
+xlabs <- c("White", "Black\nAfrican-American", 
+           "Alaskan Native or\nAmerican Indian", 
+           "Asian", "Pacific\nIslander", 
+           "Multiple Race, including Asian\nexcluding Black and White",
+           "Multiple Race, including Asian\nand Black, excluding White",
+           "Multiple Race, including Asian\nand White, excluding Black",
+           "Multiple Race, including Black\nexcluding Asian and White",
+           "Multiple Race, including Black\nand White, excluding Asian",
+           "Multiple Race, including White\nexcluding Asian and Black",
+           "Multiple Race, including\nAsian White, and Black",
+           "Multiple Race, excluding\nAsian, White, and Black"
+           
+           )
+space <- rep(c(1.1), times=length(xlabs))
+par(mar=c(15,3,1,1))
+plot(d$RACEA, las = 2,names.arg=xlabs, col="#6699FF",
+     main = "Race", space = space)
+```
+
+Out of all surveyed individuals, 72.8% identify as white. Only 17.2% identify as Black or African-American, and only 6% identify as Asian. All other race breakdowns amount to 3.9%. Thus, our survey primarily reflects the opinions of white individuals, and any results we derive should be carefully considered with that in mind. 
+
+```{r exploreHISPETH}
+xlabs <- c("Not hispanic", "Mexican", "Chicano", "Cuban\nCuban American", "Dominican", "Other", "Central\nSouth American", "Multiple\nhispanic")
+par(mar=c(10, 3, 1, 1))
+plot(d$HISPETH, las = 2, col="#6699FF", names.arg = xlabs,
+     main = "Hispanic ethnicity")
+```
+
+Out of the survey, 21.9% of individuals identify as Hispanic, with the majority of those identifying as Mexican. 
+
+```{r exploreVISITYRNO}
+xlabs <- c("No visits", "1 visit", "2 visits", "3 visits", "4 visits", "5 - 9 visits", "10+ visits")
+plot(d$VISITYRNO, las = 2, col="#6699FF", names.arg = xlabs,
+     main = "Total office visits in past 12 months")
+```
+
+21.7% of surveyed people had no medical office visits in the past 12 months. Out of those who did have an office visit, the majority had between one to three visits.
+
+```{r explorePOVCAT}
+plot(d$POVCAT, 
+     names.arg = c("Poor", "Near\npoor", "Low\nincome", "Middle\nincome", "High\nincome"), 
+     main = "CPS family income as a percentage of the poverty line",col="#6699FF")
+```
+
+Out of all surveyed individuals, 36.9% are in the high income category, which is at or greater than 400% of the poverty line. For a four-person household in 2017, this level is at around an annual income of $98400 (or, $48,240 for a one-person household). Over half of all survey respondents, 65.1%, are in middle or high income brackets; middle income being between 200-399% of the poverty line. 20.5% of respondents were at the poverty line, or below it. For a four-person household, this threshold is at $24,600 (or $12,060 for a one-person household). 
+
+```{r exploreHINOTCOV}
+plot(d$HINOTCOV, names.arg = c("Has coverage", "Has no coverage"),
+     main = "Has any health insurance?",col="#6699FF")
+```
+A large majority of respondents, 94.5%, have some form of health insurance. 
+
+```{r exploreHIPRIVATE}
+plot(d$HIPRIVATE, names.arg=c("No", "Yes"), 
+     main = "Has any private health insurance?", col="#6699FF")
+```
+
+A majority, 60.9%, of respondents have some form of private insurance. 
+
+```{r exploreADILCR}
+xlabs <- c("No", "Yes")
+plot(d$ADILCR, names.arg = xlabs, 
+     main = "Illness/injury/condition needing immediate care in last 12 months",
+     col="#6699FF")
+```
+
+Most individuals, 71.3%, did not sustain an illness, injury, or condition that needed immediate care in the last 12 months. 
+
+## Model building
+Our response is the logged expected healthcare payments, and all features are considered in the first model.
+```{r modelBuilding1}
+reg1 <- lm(logEXPSELFPAY~., data=d)
+summary(reg1)
+```
+
+```{r plotreg1}
+plot(reg1)
+```
+
+Based on our model evaluation, we can see that there are 6 outliers that should be removed from the dataset. 
+
+```{r removeoutliers}
+outliers <- rownames(d) %in% c(727, 933, 6280, 6439, 6518, 11430)
+d <- d[!outliers, ]
+# re-run the regression
+reg1 <- lm(logEXPSELFPAY~., data=d)
+summary(reg1)
+```
+
+Now, we check to see if there exists any variables that are linearly dependant.
+```{r addressMulticollinearity}
+ld.vars <- attributes(alias(reg1)$Complete)$dimnames[[1]]
+ld.vars
+```
+There are none; we are clear to proceed. 
+
+Now, we check to see if there are any variables with a high VIF score, indicating the presence of a multicollinearity issue. 
+The pre-set VIF threshold is 5. We will use the AIC criteration when computing the VIF score.
+```{r vif_reg1}
+library("car")
+vif(reg1)
+```
+
+No variables have a VIF score over 5, so we are not concerned about any severe multicollinearity issues. 
+
+Now, we will perform stepwise regression to determine if all features produce an optimal first-order model for predicting the outcome variable.
+
+```{r step}
+step(reg1)
+```
+
+The stepwise regression suggests that two features, USCTRVLTIM and MARSTAT, would help produce a more optimal model.
+
+The new model is as follows:
+```{r model2}
+remove.cols <- colnames(d) %in% c("USCTRVLTIM", "MARSTAT")
+d <- d[,!remove.cols]
+
+reg2 <- lm(logEXPSELFPAY ~ ., data=d)
+summary(reg2)
+```
+The adjusted R-squared of Model2 is 0.3794.
+The coefficient values of Model2 suggest several things:
+As age increases, the logged expected value of healthcare payments increases. This makes intuitive sense; generally speaking, as an individual ages, more healthcare issues arise. 
+
+With respect to race and ethnicity: per the model, those who identify as Black or Asian on average are expected to pay less than White individuals for healthcare, and those who identify as some form of Hispanic also are expected to pay less for healthcare. While the coefficients suggest these groups are expected to pay less for healthcare, I am inclined to think it has more to do with the fact that over 70% of the dataset is based on white individuals, so we cannot really make any strong claims about whether or not those individuals really are expected to pay less.
+
+Sex also was deemed to be a significant predictor, with the model suggesting that those who are female are, on average, expected to pay more for healthcare. This could be due to several reasons, one of which being that there are many specialty healthcare services for people who are female that are not considered to be a part of general healthcare practice. In these cases, seeing a specialist for what are colloquially known as "woman's health services" would incur more costs. 
+
+As the number of trips to the doctor increases, the expected amount of healthcare payments also increases. 
+
+As a unit is further from the poverty line, or, as an individual makes more money, the more they are expected to pay for healthcare. This could be explained by the fact that those who make more are less likely to be on government funded healthcare insurance programs, like Medicaid. 
+
+Individuals who have no insurance coverage are, on average, expected to pay more for healthcare. This makes sense as none of the healthcare costs are covered by insurance if an individual does not have insurance. 
+
+Lastly, having a condition needing immediate attention in last 12 months leads to having an increased expected healthcare payment amount. This could make sense as emergency services are not known for being cheap. 
+
+
+```{r model2VIF}
+library("car")
+vif(reg2)
+```
+
+Model 2 is the best first-order model, given our current data and predictors. 
+
+```{r model2eval}
+plot(reg2)
+```
+
+The residuals do not appear to be random, which suggests a non-linear model may be prefered for the dataset. 
+The Normal Q-Q plot suggests that we can assume the data mostly fits a normal distribution, with some exceptions at the extreme ends. 
